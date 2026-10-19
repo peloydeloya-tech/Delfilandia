@@ -1,0 +1,6 @@
+{
+  "name": "DELFILÂNDIA",
+  "description": "DELFILÂNDIA - Um mundo de produtos à sua porta. Sistema de gestão e acompanhamento de encomendas para revenda local em Angola.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

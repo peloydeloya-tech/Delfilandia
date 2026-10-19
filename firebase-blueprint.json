@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "Order": {
+      "title": "Order",
+      "description": "Encomenda local da DELFILÂNDIA com separação estrita entre dados públicos e privados",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "pattern": "^AO-[0-9]{6}$" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string", "maxLength": 150 },
+        "clientPhone": { "type": "string", "maxLength": 20 },
+        "clientProvince": { "type": "string", "maxLength": 50 },
+        "clientDistrict": { "type": "string", "maxLength": 50 },
+        "clientAddress": { "type": "string", "maxLength": 250 },
+        "productName": { "type": "string", "maxLength": 150 },
+        "productDescription": { "type": "string", "maxLength": 500 },
+        "productImageUrl": { "type": "string", "maxLength": 500 },
+        "quantity": { "type": "number" },
+        "resalePrice": { "type": "number" },
+        "amountPaid": { "type": "number" },
+        "amountPending": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["PENDENTE", "PARCIAL", "CONFIRMADO", "REEMBOLSADO"] },
+        "paymentMethod": { "type": "string", "enum": ["TRANSFERENCIA", "EXPRESS", "TPA", "DINHEIRO", "OUTRO"] },
+        "status": { "type": "string" },
+        "estimatedDeliveryDate": { "type": "string" },
+        "purchaseCost": { "type": "number" },
+        "purchaseLocation": { "type": "string" },
+        "deliveryCost": { "type": "number" },
+        "otherCosts": { "type": "number" },
+        "grossProfit": { "type": "number" },
+        "netProfit": { "type": "number" },
+        "adminNotes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["code", "clientName", "productName", "resalePrice", "status"]
+    },
+    "PublicOrder": {
+      "title": "PublicOrder",
+      "description": "Projeção sanitizada pública de uma encomenda sem dados de custo nem margens",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "clientFirstName": { "type": "string" },
+        "productName": { "type": "string" },
+        "status": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "estimatedDeliveryDate": { "type": "string" },
+        "deliveryProvince": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["code", "clientFirstName", "productName", "status"]
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Coleção privada administrativa com dados de custos e lucros"
+    },
+    "/publicOrders/{code}": {
+      "schema": { "$ref": "#/entities/PublicOrder" },
+      "description": "Coleção pública sanitizada acessível para consulta por código de rastreamento"
+    }
+  }
+}
