@@ -46,44 +46,13 @@ class ApiService {
   private defaultHeaders = {
     'Content-Type': 'application/json',
   };
-  private token: string | null = null;
-
-  constructor() {
-    if (typeof window !== 'undefined') {
-      try {
-        this.token = sessionStorage.getItem('delfilandia_session_token') || localStorage.getItem('delfilandia_session_token');
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  setAuthToken(token: string | null): void {
-    this.token = token;
-    if (typeof window !== 'undefined') {
-      try {
-        if (token) {
-          sessionStorage.setItem('delfilandia_session_token', token);
-          localStorage.setItem('delfilandia_session_token', token);
-        } else {
-          sessionStorage.removeItem('delfilandia_session_token');
-          localStorage.removeItem('delfilandia_session_token');
-        }
-      } catch {
-        // ignore
-      }
-    }
+  // Authentication is cookie-only: session tokens must never be persisted in browser storage.
+  // Kept as a compatibility shim for existing UI callers; the server issues an HttpOnly cookie.
+  setAuthToken(_token: string | null): void {
+    // Intentionally do not retain the token in memory or browser storage.
   }
 
   getAuthToken(): string | null {
-    if (this.token) return this.token;
-    if (typeof window !== 'undefined') {
-      try {
-        return sessionStorage.getItem('delfilandia_session_token') || localStorage.getItem('delfilandia_session_token');
-      } catch {
-        // ignore
-      }
-    }
     return null;
   }
 
@@ -99,11 +68,6 @@ class ApiService {
         ...this.defaultHeaders,
         ...((options.headers as Record<string, string>) || {}),
       };
-
-      const token = this.getAuthToken();
-      if (token && !headers['Authorization']) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
 
       const response = await fetch(endpoint, {
         ...options,
