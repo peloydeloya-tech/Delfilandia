@@ -259,7 +259,17 @@ async function startServer() {
 
     const origin = req.headers.origin;
     if (origin) {
-      if (!allowedOrigins.has(origin)) {
+      let isSameOrigin = false;
+      try {
+        const parsedOrigin = new URL(origin);
+        const requestHost = req.get("host");
+        const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+        const requestProto = forwardedProto || (req.secure ? "https" : "http");
+        isSameOrigin = parsedOrigin.host === requestHost && parsedOrigin.protocol === `${requestProto}:`;
+      } catch {
+        isSameOrigin = false;
+      }
+      if (!isSameOrigin && !allowedOrigins.has(origin)) {
         return res.status(403).json({ error: "Origem não autorizada." });
       }
       res.header("Vary", "Origin");
