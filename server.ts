@@ -58,6 +58,19 @@ const DATA_FILE = path.join(DATA_DIR, "store.json");
 const SETTINGS_BACKUP_FILE = path.join(DATA_DIR, "settings_backup.json");
 
 /**
+ * Never return credential material or authentication internals in ordinary app settings.
+ */
+function sanitizeSettingsForClient(settings: AppSettings): AppSettings {
+  const safe = { ...(settings as AppSettings & Record<string, unknown>) };
+  for (const key of [
+    "adminPasswordHash", "adminPasswordSalt", "adminRecoveryCodeHash",
+    "adminRecoveryCode", "adminPassword", "adminPin", "failedLoginAttempts",
+    "lockedUntil", "adminRecoverySecret",
+  ]) delete safe[key];
+  return safe as AppSettings;
+}
+
+/**
  * In-Memory Derived Cache Interface
  * PostgreSQL Cloud SQL is the authoritative Source of Truth.
  * Memory cache serves strictly for high-speed sub-millisecond response optimization.
@@ -974,7 +987,7 @@ async function startServer() {
 
 
   // Alterar Senha e Email do Administrador (Protegido por Autenticação)
-  app.post("/api/auth/change-credentials", requireAuth, async (req, res) => {
+  app.post("/api/auth/change-credentials", requireAdmin, async (req, res) => {
     const { currentPassword, newPassword, newEmail, adminName } = req.body;
 
     const plainCurrent = String(currentPassword || '').trim();
@@ -1080,7 +1093,7 @@ async function startServer() {
   // ========================================================================
 
   // Get full data (Protegido por Autenticação - Carregamento Direto do PostgreSQL)
-  app.get("/api/data", requireAuth, async (req, res) => {
+  app.get("/api/data", requireAdmin, async (req, res) => {
     try {
       const [dbOrders, dbClients, dbSettings, dbLogs] = await Promise.all([
         getDbOrders(),
@@ -1100,7 +1113,7 @@ async function startServer() {
       return res.json({
         orders: memoryCache.orders,
         clients: memoryCache.clients,
-        settings: memoryCache.settings,
+        settings: sanitizeSettingsForClient(memoryCache.settings),
         auditLogs: memoryCache.auditLogs,
       });
     } catch (error) {
@@ -1109,7 +1122,7 @@ async function startServer() {
   });
 
   // Get orders (Protegido por Autenticação)
-  app.get("/api/orders", requireAuth, async (req, res) => {
+  app.get("/api/orders", requireAdmin, async (req, res) => {
     try {
       const dbOrders = await getDbOrders();
       memoryCache.orders = dbOrders;
@@ -1120,7 +1133,7 @@ async function startServer() {
   });
 
   // Get clients (Protegido por Autenticação)
-  app.get("/api/clients", requireAuth, async (req, res) => {
+  app.get("/api/clients", requireAdmin, async (req, res) => {
     try {
       const dbClients = await getDbClients();
       memoryCache.clients = dbClients;
@@ -1131,20 +1144,20 @@ async function startServer() {
   });
 
   // Get settings (Protegido por Autenticação)
-  app.get("/api/settings", requireAuth, async (req, res) => {
+  app.get("/api/settings", requireAdmin, async (req, res) => {
     try {
       const dbSettings = await getDbSettings();
       if (dbSettings) {
         memoryCache.settings = mergePreservedSettings(dbSettings, memoryCache.settings);
       }
-      return res.json({ settings: memoryCache.settings });
+      return res.json({ settings: sanitizeSettingsForClient(memoryCache.settings) });
     } catch (error) {
       return handleApiError(res, error, "Erro ao recuperar configurações");
     }
   });
 
   // Get audit logs (Protegido por Autenticação)
-  app.get("/api/audit-logs", requireAuth, async (req, res) => {
+  app.get("/api/audit-logs", requireAdmin, async (req, res) => {
     try {
       const dbLogs = await getDbAuditLogs();
       memoryCache.auditLogs = dbLogs;
@@ -1155,7 +1168,7 @@ async function startServer() {
   });
 
   // Create Single Order endpoint (Protegido por Autenticação)
-  app.post("/api/orders/new", requireAuth, async (req, res) => {
+  app.post("/api/orders/new", requireAdmin, async (req, res) => {
     try {
       const { newOrder, newClient } = req.body;
       if (!newOrder || !newOrder.code) {
@@ -1220,7 +1233,7 @@ async function startServer() {
   });
 
   // Update Single Order endpoint (Protegido por Autenticação)
-  app.put("/api/orders/:id", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const { updatedOrder, auditLog } = req.body;
@@ -1285,7 +1298,7 @@ async function startServer() {
   });
 
   // Save clients (Protegido por Autenticação)
-  app.post("/api/clients", requireAuth, async (req, res) => {
+  app.post("/api/clients", requireAdmin, async (req, res) => {
     try {
       const { clients, client } = req.body;
 
