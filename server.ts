@@ -58,6 +58,19 @@ const DATA_FILE = path.join(DATA_DIR, "store.json");
 const SETTINGS_BACKUP_FILE = path.join(DATA_DIR, "settings_backup.json");
 
 /**
+ * Never return credential material or authentication internals in ordinary app settings.
+ */
+function sanitizeSettingsForClient(settings: AppSettings): AppSettings {
+  const safe = { ...(settings as AppSettings & Record<string, unknown>) };
+  for (const key of [
+    "adminPasswordHash", "adminPasswordSalt", "adminRecoveryCodeHash",
+    "adminRecoveryCode", "adminPassword", "adminPin", "failedLoginAttempts",
+    "lockedUntil", "adminRecoverySecret",
+  ]) delete safe[key];
+  return safe as AppSettings;
+}
+
+/**
  * In-Memory Derived Cache Interface
  * PostgreSQL Cloud SQL is the authoritative Source of Truth.
  * Memory cache serves strictly for high-speed sub-millisecond response optimization.
@@ -225,9 +238,24 @@ async function startServer() {
   }
 
   app.use(compression());
-  app.use(express.json({ limit: "50mb" }));
+  // JSON payloads are intentionally bounded. Uploads should use a dedicated,
+  // authenticated upload path rather than an unbounded JSON body.
+  app.use(express.json({ limit: "5mb" }));
 
-  // CORS & Security Headers with Strict Credentials Support
+  // Explicit CORS allowlist. In production, configure CORS_ALLOWED_ORIGINS
+  // as a comma-separated list of exact origins (scheme + host + optional port).
+  const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const allowedOrigins = new Set(
+    configuredOrigins.length > 0
+      ? configuredOrigins
+      : process.env.NODE_ENV === "production"
+        ? []
+        : ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173"]
+  );
+
   app.use((req, res, next) => {
     // Standard HTTP Security Headers
     res.header("X-Content-Type-Options", "nosniff");
@@ -244,15 +272,27 @@ async function startServer() {
 
     const origin = req.headers.origin;
     if (origin) {
+      let isSameOrigin = false;
+      try {
+        const parsedOrigin = new URL(origin);
+        const requestHost = req.get("host");
+        const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+        const requestProto = forwardedProto || (req.secure ? "https" : "http");
+        isSameOrigin = parsedOrigin.host === requestHost && parsedOrigin.protocol === `${requestProto}:`;
+      } catch {
+        isSameOrigin = false;
+      }
+      if (!isSameOrigin && !allowedOrigins.has(origin)) {
+        return res.status(403).json({ error: "Origem não autorizada." });
+      }
+      res.header("Vary", "Origin");
       res.header("Access-Control-Allow-Origin", origin);
       res.header("Access-Control-Allow-Credentials", "true");
-    } else {
-      res.header("Access-Control-Allow-Origin", "*");
     }
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, Cookie");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-CSRF-Token");
     if (req.method === "OPTIONS") {
-      return res.sendStatus(200);
+      return res.sendStatus(origin && !allowedOrigins.has(origin) ? 403 : 204);
     }
     next();
   });
@@ -947,7 +987,7 @@ async function startServer() {
 
 
   // Alterar Senha e Email do Administrador (Protegido por Autenticação)
-  app.post("/api/auth/change-credentials", requireAuth, async (req, res) => {
+  app.post("/api/auth/change-credentials", requireAdmin, async (req, res) => {
     const { currentPassword, newPassword, newEmail, adminName } = req.body;
 
     const plainCurrent = String(currentPassword || '').trim();
@@ -1053,7 +1093,7 @@ async function startServer() {
   // ========================================================================
 
   // Get full data (Protegido por Autenticação - Carregamento Direto do PostgreSQL)
-  app.get("/api/data", requireAuth, async (req, res) => {
+  app.get("/api/data", requireAdmin, async (req, res) => {
     try {
       const [dbOrders, dbClients, dbSettings, dbLogs] = await Promise.all([
         getDbOrders(),
@@ -1073,7 +1113,7 @@ async function startServer() {
       return res.json({
         orders: memoryCache.orders,
         clients: memoryCache.clients,
-        settings: memoryCache.settings,
+        settings: sanitizeSettingsForClient(memoryCache.settings),
         auditLogs: memoryCache.auditLogs,
       });
     } catch (error) {
@@ -1082,7 +1122,7 @@ async function startServer() {
   });
 
   // Get orders (Protegido por Autenticação)
-  app.get("/api/orders", requireAuth, async (req, res) => {
+  app.get("/api/orders", requireAdmin, async (req, res) => {
     try {
       const dbOrders = await getDbOrders();
       memoryCache.orders = dbOrders;
@@ -1093,7 +1133,7 @@ async function startServer() {
   });
 
   // Get clients (Protegido por Autenticação)
-  app.get("/api/clients", requireAuth, async (req, res) => {
+  app.get("/api/clients", requireAdmin, async (req, res) => {
     try {
       const dbClients = await getDbClients();
       memoryCache.clients = dbClients;
@@ -1104,20 +1144,20 @@ async function startServer() {
   });
 
   // Get settings (Protegido por Autenticação)
-  app.get("/api/settings", requireAuth, async (req, res) => {
+  app.get("/api/settings", requireAdmin, async (req, res) => {
     try {
       const dbSettings = await getDbSettings();
       if (dbSettings) {
         memoryCache.settings = mergePreservedSettings(dbSettings, memoryCache.settings);
       }
-      return res.json({ settings: memoryCache.settings });
+      return res.json({ settings: sanitizeSettingsForClient(memoryCache.settings) });
     } catch (error) {
       return handleApiError(res, error, "Erro ao recuperar configurações");
     }
   });
 
   // Get audit logs (Protegido por Autenticação)
-  app.get("/api/audit-logs", requireAuth, async (req, res) => {
+  app.get("/api/audit-logs", requireAdmin, async (req, res) => {
     try {
       const dbLogs = await getDbAuditLogs();
       memoryCache.auditLogs = dbLogs;
@@ -1128,7 +1168,7 @@ async function startServer() {
   });
 
   // Create Single Order endpoint (Protegido por Autenticação)
-  app.post("/api/orders/new", requireAuth, async (req, res) => {
+  app.post("/api/orders/new", requireAdmin, async (req, res) => {
     try {
       const { newOrder, newClient } = req.body;
       if (!newOrder || !newOrder.code) {
@@ -1156,7 +1196,7 @@ async function startServer() {
   });
 
   // Delete Single Order endpoint (Protegido por Autenticação)
-  app.delete("/api/orders/:idOrCode", requireAuth, async (req, res) => {
+  app.delete("/api/orders/:idOrCode", requireAdmin, async (req, res) => {
     try {
       const target = (req.params.idOrCode || "").trim();
       if (!target) {
@@ -1193,7 +1233,7 @@ async function startServer() {
   });
 
   // Update Single Order endpoint (Protegido por Autenticação)
-  app.put("/api/orders/:id", requireAuth, async (req, res) => {
+  app.put("/api/orders/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const { updatedOrder, auditLog } = req.body;
@@ -1217,7 +1257,7 @@ async function startServer() {
   });
 
   // Delete/Purge All Orders endpoint (Protegido por Autenticação)
-  app.delete("/api/orders", requireAuth, async (req, res) => {
+  app.delete("/api/orders", requireAdmin, async (req, res) => {
     try {
       // 1. Confirmação atômica no PostgreSQL
       await saveDbOrders([]);
@@ -1231,11 +1271,18 @@ async function startServer() {
   });
 
   // Save Orders Batch (Protegido por Autenticação)
-  app.post("/api/orders", requireAuth, async (req, res) => {
+  app.post("/api/orders", requireAdmin, async (req, res) => {
     try {
       const { orders } = req.body;
       if (!Array.isArray(orders)) {
         return res.status(400).json({ error: "Lista de encomendas inválida" });
+      }
+      // An empty replacement batch must never implicitly purge production orders.
+      if (orders.length === 0) {
+        return res.status(400).json({
+          error: "A lista vazia não pode substituir nem eliminar encomendas. Utilize um procedimento administrativo explícito.",
+          code: "EMPTY_ORDER_BATCH",
+        });
       }
 
       // 1. Confirmação transacional no PostgreSQL
@@ -1251,7 +1298,7 @@ async function startServer() {
   });
 
   // Save clients (Protegido por Autenticação)
-  app.post("/api/clients", requireAuth, async (req, res) => {
+  app.post("/api/clients", requireAdmin, async (req, res) => {
     try {
       const { clients, client } = req.body;
 
@@ -1280,7 +1327,7 @@ async function startServer() {
   });
 
   // Save settings (Protegido por Autenticação)
-  app.post("/api/settings", requireAuth, async (req, res) => {
+  app.post("/api/settings", requireAdmin, async (req, res) => {
     try {
       const { settings } = req.body;
       if (!settings || typeof settings !== 'object') {
@@ -1324,7 +1371,7 @@ async function startServer() {
   });
 
   // Save audit logs (Protegido por Autenticação)
-  app.post("/api/audit-logs", requireAuth, async (req, res) => {
+  app.post("/api/audit-logs", requireAdmin, async (req, res) => {
     try {
       const { auditLogs, auditLog } = req.body;
 

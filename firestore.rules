@@ -1,20 +1,21 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Global safety net - Default Deny All
+    // Default deny: only explicit rules below can grant access.
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
     function isSignedIn() {
       return request.auth != null;
     }
 
+    // Firebase Admin SDK must set a trusted custom claim: { admin: true } or { role: "ADMIN" }.
+    // Email verification and a non-null UID are not administrator privileges.
     function isAdmin() {
       return isSignedIn() && (
-        request.auth.token.email_verified == true || 
-        request.auth.uid != null
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'ADMIN'
       );
     }
 
@@ -22,31 +23,24 @@ service cloud.firestore {
       return code is string && code.matches('^AO-[0-9]{6}$');
     }
 
-    // PUBLIC LOOKUP COLLECTION: Read-only access for sanitized public order projections
-    // Strictly forbids list, create, update, delete by anonymous clients.
     match /publicOrders/{code} {
       allow get: if isValidCode(code);
       allow list: if false;
       allow write: if isAdmin();
     }
 
-    // PRIVATE ADMINISTRATIVE COLLECTIONS
-    // Full orders (containing purchase costs, locations, net profit, admin notes)
     match /orders/{orderId} {
       allow read, write: if isAdmin();
     }
 
-    // Clients collection (containing full name, phone, address)
     match /clients/{clientId} {
       allow read, write: if isAdmin();
     }
 
-    // Audit Logs collection
     match /auditLogs/{logId} {
       allow read, write: if isAdmin();
     }
 
-    // System App Settings collection
     match /settings/{settingId} {
       allow read, write: if isAdmin();
     }
